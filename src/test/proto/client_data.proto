@@ -1,0 +1,16 @@
+syntax="proto3";
+package com.lemmsh.lastmile_client;
+
+import "lastmile.proto";
+
+service CountryCapitalCache {
+  rpc DataStream (com.lemmsh.lastmile.StreamRequest) returns (stream CountryCapitalPayload);
+}
+
+message CountryCapitalPayload { //this one is user-defined
+  com.lemmsh.lastmile.Manifest manifest = 1; //this is mandatory
+  com.lemmsh.lastmile.Version version = 2; //this is mandatory
+  string country = 3; //this is user's discretion
+  string capital = 4; //this is user's discretion
+  repeated int64 huge_payload = 5; //something to increase message size for testing
+}

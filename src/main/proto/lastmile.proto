@@ -1,0 +1,18 @@
+syntax = "proto3";
+package com.lemmsh.lastmile;
+
+
+message StreamRequest {
+  Version max_known_version = 1;
+  bool streaming = 2; //todo: not yet implemented
+}
+
+message Version {
+  int64 epoch = 1;
+  int64 sequence = 2;
+}
+
+message Manifest {
+  int64 epoch = 1;
+  int64 max_known_sequence = 2;
+}
