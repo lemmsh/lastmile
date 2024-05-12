@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
+import java.util.*
 
 object LocalRun {
 
@@ -103,6 +104,6 @@ class CountryCacheServiceImpl(val cacheImpl: LastMileServer<CountryCapitalPayloa
     CountryCapitalCacheGrpcKt.CountryCapitalCacheCoroutineImplBase() {
 
     override fun dataStream(request: Lastmile.StreamRequest): Flow<CountryCapitalPayload> {
-        return cacheImpl.dataStream(request)
+        return cacheImpl.dataStream(request, UUID.randomUUID(), null)
     }
 }
