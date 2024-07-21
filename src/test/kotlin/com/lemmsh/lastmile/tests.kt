@@ -2,6 +2,7 @@ package com.lemmsh.lastmile
 
 import com.lemmsh.lastmile_client.ClientData.CountryCapitalPayload
 import com.lemmsh.lastmile_client.CountryCapitalCacheGrpcKt
+import com.lemmsh.lastmile_client.countryCapitalPayload
 import io.grpc.*
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
@@ -22,65 +23,34 @@ class LastMileTests {
         c.startServer()
         c.startClient()
 
-        c.cacheServer.push("UK", "London")
-        c.cacheServer.push("USA", "New York")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "UK"
+            capital = "London"
+        })
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "New York"
+        })
         c.cacheServer.declareInitialized()
         runBlocking {
             delay(1000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("New York", c.cacheClient.data()?.get("USA"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals("New York", c.cacheClient.data()?.get("USA")?.capital)
 
-        c.cacheServer.push("USA", "Washington")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "Washington"
+        })
         runBlocking {
             delay(1000)
         }
-        assertEquals("Washington", c.cacheClient.data()?.get("USA"))
-
+        assertEquals("Washington", c.cacheClient.data()?.get("USA")?.capital)
 
         c.stopClient()
         c.stopServer()
     }
 
-
-    @Test
-    fun testGC() {
-        val c = TestContext(scope)
-        c.startServer()
-        c.startClient()
-
-        c.cacheServer.push("UK", "London")
-        c.cacheServer.push("USA", "New York")
-        c.cacheServer.declareInitialized()
-        runBlocking {
-            delay(1000)
-        }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("New York", c.cacheClient.data()?.get("USA"))
-
-        c.cacheServer.push("USA", "Washington")
-        c.cacheServer.push("Germany", "Berlin1")
-        c.cacheServer.push("Germany", "Berlin2")
-        c.cacheServer.push("Germany", "Berlin3")
-        c.cacheServer.push("Germany", "Berlin4")
-        c.cacheServer.push("Germany", "Berlin5")
-        c.cacheServer.push("Germany", "Berlin6")
-        c.cacheServer.push("Germany", "Berlin")
-        runBlocking {
-            delay(1000)
-        }
-        assertEquals(10, c.cacheServer.size())
-        assertEquals("Berlin", c.cacheClient.data()?.get("Germany"))
-        c.cacheServer.gc()
-        assertEquals(3, c.cacheServer.size())
-
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("Berlin", c.cacheClient.data()?.get("Germany"))
-        assertEquals("Washington", c.cacheClient.data()?.get("USA"))
-
-        c.stopClient()
-        c.stopServer()
-    }
 
     @Test
     fun testServerRestart() {
@@ -88,14 +58,20 @@ class LastMileTests {
         c.restartServer()
         c.startClient()
 
-        c.cacheServer!!.push("UK", "London")
-        c.cacheServer!!.push("USA", "Washington")
+        c.cacheServer!!.push(countryCapitalPayload {
+            country = "UK"
+            capital = "London"
+        })
+        c.cacheServer!!.push(countryCapitalPayload {
+            country = "USA"
+            capital = "Washington"
+        })
         c.cacheServer!!.declareInitialized()
         runBlocking {
             delay(1000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("Washington", c.cacheClient.data()?.get("USA"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals("Washington", c.cacheClient.data()?.get("USA")?.capital)
 
         //here the server went down, and then up, and it's not initialized. So the expected behaviour is
         //that we'll have the last known state still available on the client
@@ -103,17 +79,20 @@ class LastMileTests {
         runBlocking {
             delay(1000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
 
         //now, the server side cache is getting initialized with new data
-        c.cacheServer!!.push("France", "Paris")
+        c.cacheServer!!.push(countryCapitalPayload {
+            country = "France"
+            capital = "Paris"
+        })
         c.cacheServer!!.declareInitialized()
         runBlocking {
             delay(1000)
         }
-        assertEquals("Paris", c.cacheClient.data()?.get("France"))
-        assertEquals(null, c.cacheClient.data()?.get("UK"))
-        assertEquals(null, c.cacheClient.data()?.get("USA"))
+        assertEquals("Paris", c.cacheClient.data()?.get("France")?.capital)
+        assertEquals(null, c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals(null, c.cacheClient.data()?.get("USA")?.capital)
 
         c.stopClient()
         c.stopServer()
@@ -128,22 +107,31 @@ class LastMileTests {
             delay(1000)
         }
         val connectionId = c.cacheServer.connections().keys.toList().first()
-        c.cacheServer.push("UK", "London")
-        c.cacheServer.push("USA", "New York")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "UK"
+            capital = "London"
+        })
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "New York"
+        })
         c.cacheServer.declareInitialized()
         runBlocking {
             delay(1000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("New York", c.cacheClient.data()?.get("USA"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals("New York", c.cacheClient.data()?.get("USA")?.capital)
 
         assertEquals(connectionId, c.cacheServer.connections().keys.toList().first())
 
-        c.cacheServer.push("USA", "Washington")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "Washington"
+        })
         runBlocking {
             delay(1000)
         }
-        assertEquals("Washington", c.cacheClient.data()?.get("USA"))
+        assertEquals("Washington", c.cacheClient.data()?.get("USA")?.capital)
 
         assertEquals(connectionId, c.cacheServer.connections().keys.toList().first())
 
@@ -160,25 +148,34 @@ class LastMileTests {
             delay(1000)
         }
         val connectionId = c.cacheServer.connections().keys.toList().first()
-        c.cacheServer.push("UK", "London")
-        c.cacheServer.push("USA", "New York")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "UK"
+            capital = "London"
+        })
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "New York"
+        })
         c.cacheServer.declareInitialized()
         runBlocking {
             delay(1000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("New York", c.cacheClient.data()?.get("USA"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals("New York", c.cacheClient.data()?.get("USA")?.capital)
 
         assertEquals(connectionId, c.cacheServer.connections().keys.toList().first())
 
-        c.cacheServer.push("USA", "Washington")
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "Washington"
+        })
 
         c.cacheServer.invalidateClients()
         runBlocking {
             delay(2000)
         }
-        assertEquals("London", c.cacheClient.data()?.get("UK"))
-        assertEquals("Washington", c.cacheClient.data()?.get("USA"))
+        assertEquals("London", c.cacheClient.data()?.get("UK")?.capital)
+        assertEquals("Washington", c.cacheClient.data()?.get("USA")?.capital)
 
         assertEquals(connectionId, c.cacheServer.connections().keys.toList().first())
 
@@ -190,7 +187,6 @@ class LastMileTests {
 
 class TestContext(val scope: CoroutineScope,
                   val minRate: Double = 100.0,
-                  val gcJustification: Double = 0.8,
                   val reconnectBackoff: Long = 100,
                   val reconnectOnNoNewDataBackoff: Long = 100,
                   val reconnectAttempts: Int = 2,
@@ -203,7 +199,6 @@ class TestContext(val scope: CoroutineScope,
         CountryServerAdapter(),
         "the_cache",
         LastMileServerConfiguration(
-            gcJustification,
             minRate,
         )
     )
@@ -267,7 +262,6 @@ class TestContext(val scope: CoroutineScope,
 
 class RestartsTestContext(val scope: CoroutineScope,
                   val minRate: Double = 100.0,
-                  val gcJustification: Double = 0.8,
                   val reconnectBackoff: Long = 100,
                   val reconnectOnNoNewDataBackoff: Long = 100,
                   val reconnectAttempts: Int = 10,
@@ -275,7 +269,7 @@ class RestartsTestContext(val scope: CoroutineScope,
 ) {
     val name = "lastmile-test-${UUID.randomUUID()}"
 
-    var cacheServer: LastMileServer<CountryCapitalPayload, String, String>? = null
+    var cacheServer: LastMileServer<CountryCapitalPayload, String>? = null
     var grpcWrapper: CountryCacheServiceImpl? = null
     var server: Server? = null
 
@@ -311,7 +305,6 @@ class RestartsTestContext(val scope: CoroutineScope,
             "the_cache",
             LastMileServerConfiguration(
                 minRate,
-                gcJustification,
             )
         )
         grpcWrapper = CountryCacheServiceImpl(cacheServer!!)
@@ -329,6 +322,3 @@ class RestartsTestContext(val scope: CoroutineScope,
     }
 
 }
-
-
-

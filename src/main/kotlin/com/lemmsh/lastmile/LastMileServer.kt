@@ -1,24 +1,29 @@
 package com.lemmsh.lastmile
 
+import com.google.common.hash.Hashing
 import com.google.protobuf.GeneratedMessageV3
 import com.lemmsh.lastmile.Lastmile.Manifest
 import com.lemmsh.lastmile.Lastmile.Version
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.flow
 import org.slf4j.LoggerFactory
+import java.net.InetAddress
+import java.security.SecureRandom
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.collections.ArrayList
+import kotlin.collections.LinkedHashMap
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 
-interface ServerPayloadAdapter<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any> {
-    fun payloadFromManifest(manifest: Manifest): PayloadMessage
-    fun payloadFromUpdate(key: Key, value: Value, version: Version): PayloadMessage
+interface ServerPayloadAdapter<PayloadMessage: GeneratedMessageV3, Key: Any> {
+    fun setManifest(manifest: Manifest): PayloadMessage
+    fun setVersion(value: PayloadMessage, version: Version): PayloadMessage
+    fun key(value: PayloadMessage): Key
 }
 
 class ClientStat(val requestReceived: Long,
@@ -26,84 +31,64 @@ class ClientStat(val requestReceived: Long,
                  var epoch: Long = 0)
 
 data class LastMileServerConfiguration(
-    val gcWhenThisMuchUniqKeysAmongAllRecords: Double,
     val slowestAllowedDownloadRateKeysPerSecond: Double,
 )
 
-class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
-    private val adapter: ServerPayloadAdapter<PayloadMessage, Key, Value>,
+class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any>(
+    private val adapter: ServerPayloadAdapter<PayloadMessage, Key>,
     val name: String,
     val configuration: LastMileServerConfiguration
 ) {
-    @Volatile private var currentEpoch: Long = System.currentTimeMillis()
+    @Volatile private var currentEpoch: Long = newEpoch()
     @Volatile private var initialized: Boolean = false
 
-    private var updateLog: ArrayList<CacheEntry<Key, Value>> = ArrayList()
+    private var updateLog: LinkedHashMap<Key, CacheEntry<PayloadMessage>> = LinkedHashMap()
     private val updateLogLock: ReentrantReadWriteLock = ReentrantReadWriteLock()
+    private var currentSequence: Long = 0L
 
     private val clientRegistry: ConcurrentMap<UUID, ClientStat> = ConcurrentHashMap()
     private val logger = LoggerFactory.getLogger(javaClass.canonicalName + ".$name")
 
-    fun push(key: Key, value: Value) = updateLogLock.write {
-        val currentSequence = currentSequence()
-        updateLog.add(CacheEntry(key, value, currentSequence + 1))
+    fun push(value: PayloadMessage) = updateLogLock.write {
+        val key = adapter.key(value)
+        updateLog.remove(key)
+        currentSequence++
+        updateLog.put(key, CacheEntry(value, currentSequence))
     }
-    fun pushAll(data: Iterable<Pair<Key, Value>>) = updateLogLock.write {
-        var currentSequence = currentSequence()
+    fun pushAll(data: Iterable<PayloadMessage>) = updateLogLock.write {
         for (d in data) {
-            updateLog.add(CacheEntry(d.first, d.second, currentSequence + 1))
+            val key = adapter.key(d)
+            updateLog.remove(key)
             currentSequence++
+            updateLog.put(key, CacheEntry(d, currentSequence))
         }
     }
     fun declareInitialized() {
         initialized = true
         logger.info("The cache is initialized")
     }
+
+    fun newEpoch(): Long {
+        val s = Hashing.sha256().hashString(InetAddress.getLocalHost().hostName, Charsets.UTF_8)
+        return Math.abs(SecureRandom(s.asBytes()).nextLong())
+    }
+    fun time() = TimeUnit.NANOSECONDS.toMillis(System.nanoTime())
+
     fun invalidateClients() {
-        currentEpoch = System.currentTimeMillis()
+        currentEpoch = newEpoch()
+        currentSequence = 0L
         logger.info("Cache invalidation requested. The clients will receive an invalidation command on the next update, the new epoch is $currentEpoch")
     }
     fun size(): Int = updateLogLock.read {
         return updateLog.size
     }
 
-    fun gc() {
-        val gcNeeded = updateLogLock.read {
-            val v = updateLog.groupBy { it.key }.mapValues { it.value.size }.values
-            val distinct = v.size
-            val total = v.sum()
-            distinct.toDouble()/total.toDouble() < configuration.gcWhenThisMuchUniqKeysAmongAllRecords
-        }
-        if (gcNeeded) {
-            updateLogLock.write {
-                logger.info("starting GC")
-                val size = updateLog.size
-                val knownKeys = mutableSetOf<Key>()
-                val markedForRemoval = mutableSetOf<Int>()
-                for (i in size-1 downTo 0) {
-                    val key = updateLog[i].key
-                    if (knownKeys.contains(key)) markedForRemoval.add(i)
-                    knownKeys.add(key)
-                }
-                val newUpdateLog: ArrayList<CacheEntry<Key, Value>> = ArrayList(((updateLog.size - markedForRemoval.size)/configuration.gcWhenThisMuchUniqKeysAmongAllRecords).toInt())
-                for (i in 0 .. size-1) {
-                    if (!markedForRemoval.contains(i)) {
-                        newUpdateLog.add(updateLog[i])
-                    }
-                }
-                updateLog = newUpdateLog
-                logger.info("GC complete. The log size was ${size}, it is now ${updateLog.size}")
-            }
-        } else {
-            logger.debug("GC is not needed")
-        }
-    }
     fun connections() = clientRegistry.toMap()
 
-    private fun currentSequence() = updateLogLock.read { updateLog.lastOrNull()?.sequence?:0L }
+    private fun currentSequence() = updateLogLock.read { updateLog.values.lastOrNull()?.sequence?:0L }
 
     private fun regClient(requestId: UUID, lastSeqSeenByClient: Long = 0, clientEpoch: Long = 0) {
-        val clientStat = clientRegistry[requestId] ?: ClientStat(requestReceived = System.currentTimeMillis())
+        val clientStat = clientRegistry[requestId] ?: ClientStat(requestReceived = time())
         clientStat.epoch = clientEpoch
         clientStat.sequenceSent = lastSeqSeenByClient
         clientRegistry.put(requestId, clientStat)
@@ -119,7 +104,7 @@ class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
 
     fun dataStream(request: Lastmile.StreamRequest,
                    requestId: UUID,
-                   filter: ((Key, Value) -> Boolean)?
+                   filter: ((PayloadMessage) -> Boolean)?
     ): Flow<PayloadMessage> {
         logger.debug(
             "New request {} of epoch {}, starting from the sequence {}",
@@ -130,7 +115,7 @@ class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
         regClient(requestId)
 
         return flow {
-            if (!initialized) {
+            while (!initialized) {
                 delay(1000)
             }
             var clientEpoch = request.maxKnownVersionOrNull?.epoch?:0L
@@ -147,27 +132,26 @@ class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
 
                 //here we're implementing eager copy-on-write array, actually. The overhead is the array structure itself
                 //we take slow consumers into account because we may accumulate a lot of the copies because of them
-                val unfilteredCopy: List<CacheEntry<Key, Value>> = updateLogLock.read {
-                    if ((updateLog.lastOrNull()?.sequence ?: 0L) <= lastSequenceSeenByClient) listOf<CacheEntry<Key, Value>>()
-                    else updateLog.filter { it.sequence > lastSequenceSeenByClient } //this does a copy
+                val unfilteredCopy: List<CacheEntry<PayloadMessage>> = updateLogLock.read {
+                    if (currentSequence() <= lastSequenceSeenByClient) listOf()
+                    else updateLog.values.filter { it.sequence > lastSequenceSeenByClient } //this does a copy
                 }
-                val copy = if (filter == null) unfilteredCopy else unfilteredCopy.filter { filter.invoke(it.key, it.value) }
+                val copy = if (filter == null) unfilteredCopy else unfilteredCopy.filter { filter.invoke(it.value) }
                 if (copy.isNotEmpty()) {
                     val maxSequence = copy.last().sequence
                     if (lastSequenceSeenByClient == 0L) {
-                        emit(adapter.payloadFromManifest(
+                        emit(adapter.setManifest(
                             manifest {
                                 epoch = clientEpoch
                                 maxKnownSequence = maxSequence
                             }
                         ))
                     }
-                    val streamStarted = System.currentTimeMillis()
+                    val streamStarted = time()
                     var streamedSoFar: Long = 0L
                     logger.debug("going to send {} items", copy.size)
                     for (item in copy) {
-                        emit(adapter.payloadFromUpdate(
-                            item.key,
+                        emit(adapter.setVersion(
                             item.value,
                             version {
                                 epoch = clientEpoch
@@ -176,7 +160,7 @@ class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
                         ))
                         lastSequenceSeenByClient = item.sequence
                         streamedSoFar++
-                        if (isSlowConsumer(streamedSoFar, streamStarted, System.currentTimeMillis())) {
+                        if (isSlowConsumer(streamedSoFar, streamStarted, time())) {
                             logger.info("the request ${requestId} is being processed too slow, dropping that for the client to reconnect")
                             deregClient(requestId)
                             return@flow //close the stream, since the consumer is slow and should reconnect
@@ -207,6 +191,6 @@ class LastMileServer<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any>(
 
 }
 
-data class CacheEntry<Key: Any, Value: Any>(
-    val key: Key, val value: Value, val sequence: Long
+data class CacheEntry<PayloadMessage>(
+    val value: PayloadMessage, val sequence: Long
 )

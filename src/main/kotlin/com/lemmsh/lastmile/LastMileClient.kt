@@ -16,11 +16,10 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 
-interface ClientPayloadAdapter<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any> {
+interface ClientPayloadAdapter<PayloadMessage: GeneratedMessageV3, Key: Any> {
     fun getManifest(payload: PayloadMessage): Manifest?
     fun getVersion(payload: PayloadMessage): Version?
     fun getKey(payload: PayloadMessage): Key
-    fun getValue(payload: PayloadMessage): Value
     fun connect(request: Lastmile.StreamRequest): Flow<PayloadMessage>
 }
 data class ClientCacheEntry<Value: Any>(
@@ -41,8 +40,8 @@ data class LastMileClientConfiguration(
  *
  * here we choose the first one, as we prioritize availability
  */
-class LastMileClient<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any> (
-    private val adapter: ClientPayloadAdapter<PayloadMessage, Key, Value>,
+class LastMileClient<PayloadMessage: GeneratedMessageV3, Key: Any> (
+    private val adapter: ClientPayloadAdapter<PayloadMessage, Key>,
     private val coroutineScope: CoroutineScope,
     val name: String,
     val configuration: LastMileClientConfiguration
@@ -53,10 +52,10 @@ class LastMileClient<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any> (
     private var maxSeenSequence: Long? = null
     private var initializationWatermark: Long? = null
     @Volatile private var initialized: Boolean = false
-    private val nearCache: ConcurrentMap<Key, ClientCacheEntry<Value>> = ConcurrentHashMap()
+    private val nearCache: ConcurrentMap<Key, ClientCacheEntry<PayloadMessage>> = ConcurrentHashMap()
     private val metadataLock: ReentrantLock = ReentrantLock() //it may be not necessary...
 
-    fun data(): ClientCacheData<Key, Value>? {
+    fun data(): ClientCacheData<Key, PayloadMessage>? {
         if (!initialized) return null
         else return ClientCacheData(nearCache)
     }
@@ -128,7 +127,7 @@ class LastMileClient<PayloadMessage: GeneratedMessageV3, Key: Any, Value: Any> (
         if (initializationWatermark == null) {
             throw CacheClientException("Unexpected data payload before manifest. Need to reconnect")
         }
-        this.nearCache.put(adapter.getKey(payload), ClientCacheEntry(adapter.getValue(payload),
+        this.nearCache.put(adapter.getKey(payload), ClientCacheEntry(payload,
             version.sequence, version.epoch))
         maxSeenSequence = version.sequence
         if (maxSeenSequence!! >= initializationWatermark!! && !initialized) {

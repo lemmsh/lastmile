@@ -17,16 +17,25 @@ object LocalRun {
     fun main(args: Array<String>) {
         val scope = CoroutineScope(Dispatchers.Default)
 
-        val theCache = LastMileServer<CountryCapitalPayload, String, String>(
+        val theCache = LastMileServer<CountryCapitalPayload, String>(
             CountryServerAdapter(),
             "the_cache",
             LastMileServerConfiguration(
-                0.8, 100.0,
+                10.0
             )
         )
-        theCache.push("a", "1")
-        theCache.push("b", "2")
-        theCache.push("c", "42")
+        theCache.push(countryCapitalPayload {
+            country = "a"
+            capital = "1"
+        })
+        theCache.push(countryCapitalPayload {
+            country = "b"
+            capital = "2"
+        })
+        theCache.push(countryCapitalPayload {
+            country = "c"
+            capital = "42"
+        })
         theCache.declareInitialized()
 
 
@@ -61,7 +70,7 @@ object LocalRun {
 }
 
 class CountryClientAdapter(val stub: CountryCapitalCacheGrpcKt.CountryCapitalCacheCoroutineStub):
-    ClientPayloadAdapter<CountryCapitalPayload, String, String> {
+    ClientPayloadAdapter<CountryCapitalPayload, String> {
     override fun getManifest(payload: CountryCapitalPayload): Lastmile.Manifest? {
         return if (payload.hasManifest()) payload.manifest else null
     }
@@ -74,33 +83,29 @@ class CountryClientAdapter(val stub: CountryCapitalCacheGrpcKt.CountryCapitalCac
         return payload.country
     }
 
-    override fun getValue(payload: CountryCapitalPayload): String {
-        return payload.capital
-    }
-
     override fun connect(request: Lastmile.StreamRequest): Flow<CountryCapitalPayload> {
         return stub.dataStream(request)
     }
 }
 
-class CountryServerAdapter: ServerPayloadAdapter<CountryCapitalPayload, String, String> {
-    override fun payloadFromManifest(manifest: Lastmile.Manifest): CountryCapitalPayload {
+class CountryServerAdapter: ServerPayloadAdapter<CountryCapitalPayload, String> {
+    override fun setManifest(manifest: Lastmile.Manifest): CountryCapitalPayload {
         return countryCapitalPayload {
             this.manifest = manifest
         }
     }
 
-    override fun payloadFromUpdate(key: String, value: String, version: Lastmile.Version): CountryCapitalPayload {
-        return countryCapitalPayload {
-            country = key
-            capital = value
-            this.version = version
-        }
+    override fun key(value: CountryCapitalPayload): String {
+        return value.country
+    }
+
+    override fun setVersion(value: CountryCapitalPayload, version: Lastmile.Version): CountryCapitalPayload {
+        return value.toBuilder().setVersion(version).build()
     }
 
 }
 
-class CountryCacheServiceImpl(val cacheImpl: LastMileServer<CountryCapitalPayload, *, *>):
+class CountryCacheServiceImpl(val cacheImpl: LastMileServer<CountryCapitalPayload, *>):
     CountryCapitalCacheGrpcKt.CountryCapitalCacheCoroutineImplBase() {
 
     override fun dataStream(request: Lastmile.StreamRequest): Flow<CountryCapitalPayload> {

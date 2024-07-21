@@ -29,12 +29,24 @@ object SlowConsumerTest {
             delay(3000)
         }
 
-        c.cacheServer.push("UK", LargeObject("London", largeArray()))
-        c.cacheServer.push("USA", LargeObject("New York", largeArray()))
+        c.cacheServer.push(countryCapitalPayload {
+            country = "UK"
+            capital = "London"
+            hugePayload.addAll(largeArray())
+        })
+        c.cacheServer.push(countryCapitalPayload {
+            country = "USA"
+            capital = "Washington"
+            hugePayload.addAll(largeArray())
+        })
         c.cacheServer.declareInitialized()
 
         for (i in 1..100) {
-            c.cacheServer.push("Country${i%10}", LargeObject(i.toString(), largeArray()))
+            c.cacheServer.push(countryCapitalPayload {
+                country = "Country${i%10}"
+                capital = i.toString()
+                hugePayload.addAll(largeArray())
+            })
         }
         c.startClient()
 
@@ -65,7 +77,6 @@ class SlowConsumerTestContext(val scope: CoroutineScope) {
         "the_cache",
         LastMileServerConfiguration(
             0.8,
-            1.0,
         )
     )
     val grpcWrapper = CountryCacheServiceImpl(cacheServer)
@@ -133,9 +144,8 @@ class SlowConsumerTestContext(val scope: CoroutineScope) {
     }
 
 }
-data class LargeObject(val capital: String, val array: List<Long>)
 class SlowCountryClientAdapter(val stub: CountryCapitalCacheGrpcKt.CountryCapitalCacheCoroutineStub):
-    ClientPayloadAdapter<CountryCapitalPayload, String, LargeObject> {
+    ClientPayloadAdapter<CountryCapitalPayload, String> {
     override fun getManifest(payload: CountryCapitalPayload): Lastmile.Manifest? {
         return if (payload.hasManifest()) payload.manifest else null
     }
@@ -148,10 +158,6 @@ class SlowCountryClientAdapter(val stub: CountryCapitalCacheGrpcKt.CountryCapita
         return payload.country
     }
 
-    override fun getValue(payload: CountryCapitalPayload): LargeObject {
-        return LargeObject(payload.capital, payload.hugePayloadList)
-    }
-
     override fun connect(request: Lastmile.StreamRequest): Flow<CountryCapitalPayload> {
         return stub.dataStream(request).map {
             delay(2000)
@@ -159,20 +165,19 @@ class SlowCountryClientAdapter(val stub: CountryCapitalCacheGrpcKt.CountryCapita
         }
     }
 }
-class SlowCountryServerAdapter: ServerPayloadAdapter<CountryCapitalPayload, String, LargeObject> {
-    override fun payloadFromManifest(manifest: Lastmile.Manifest): CountryCapitalPayload {
+class SlowCountryServerAdapter: ServerPayloadAdapter<CountryCapitalPayload, String> {
+    override fun setManifest(manifest: Lastmile.Manifest): CountryCapitalPayload {
         return countryCapitalPayload {
             this.manifest = manifest
         }
     }
 
-    override fun payloadFromUpdate(key: String, value: LargeObject, version: Lastmile.Version): CountryCapitalPayload {
-        return countryCapitalPayload {
-            country = key
-            capital = value.capital
-            hugePayload.addAll(value.array)
-            this.version = version
-        }
+    override fun key(value: CountryCapitalPayload): String {
+        return value.country
+    }
+
+    override fun setVersion(value: CountryCapitalPayload, version: Lastmile.Version): CountryCapitalPayload {
+        return value.toBuilder().setVersion(version).build()
     }
 
 }
