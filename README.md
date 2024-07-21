@@ -27,6 +27,6 @@ Each cache instance defines its protocol using proto definitions, which include 
 `LastMileServer` supports an event log where updates are sequentially stored along with their sequence numbers. The sequence number contains an epoch which represents a session. The epoch changes when the client re-connects to a different server instance or when the server wants to force the cache invalidation.
 Clients connect and receive a stream of these updates in chronological order, each tagged with an epoch to manage data consistency across changes. Clients use the sequence numver to figure out that they've downloaded the cache in full. 
 
-To prevent concurrency issues, each client receives a copy of the event log. To optimize memory usage, especially during frequent updates, the server employs a garbage collection method (`gc()`) that retains only the most recent updates for each key. Slow consumers, who might otherwise exhaust server memory with their log copies, are required to reconnect if their download speed falls below a certain threshold.
+To prevent concurrency issues, each client receives a copy of the event log. Slow consumers, who might otherwise exhaust server memory with their log copies, are required to reconnect if their download speed falls below a certain threshold.
 
 Updates are only emitted from the cache once it is fully populated, as declared by the server-side code. This prevents the distribution of incomplete data. Clients maintain their data across reconnections unless they successfully re-fetch the entire data set from the server.
